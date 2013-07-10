@@ -1,0 +1,336 @@
+ CONTROL
+  {
+
+  job      = cylinder_ibm_re20_test
+  model    = mcyl_11122
+!  model    = mcylinder_debug
+  task     = calculate
+!  task     = raytrace
+
+  runtype = 0 
+  iflow   = 0 
+
+  period   = 1 
+  step     = 2000 
+  ncpl     = 1
+  nbl      = 1
+  isave    = 1
+!  mcyc     = 1:1:1:1:1
+!  mcyc     = 200:200:250:300:400:500:600
+!  mcyc     = 400:400:400:600:800
+!  mcyc     = 800:800:900:1000:1200
+   mcyc     = 100:100:120:150:180
+!   mcyc     = 50:50:50:60:70
+!   mcyc     = 5:5:5:5:5
+  nout    = 1,
+  ntim    = 1,
+  iprnt   = 0,
+  lprnt   = 50,
+  tecflo  = 1
+
+  blayer     = off
+  probing    = off
+  sectioning = off
+  prescribe  = off
+  approxbc   = off
+  rom        = off
+  coupled    = off
+  flow2d     = off
+  signal     = "FIM"
+
+  ibm = off
+  }
+
+ fLow
+  {
+!  unit      = metric
+  altitude  = -4572
+!  altitude  =0 
+
+!  mach      = 0.00237
+  mach      = 0.5
+!  mach      = 1.715e-06
+  tmean     = 273.15
+  reynolds  = 200.0
+  pmean     = 100000
+
+!  pmean     = 4560
+!  mumean    = 0.1642E-04
+!  mumean    = 4.116E-06
+!  mumean    =  0.844,
+  mumean    =  0.005,
+!  mumean    =  2.11,
+!  mumean    = 1.055,
+!  mumean    = 0.0000181,
+
+  rgasmean  = 287.,
+  gamma     = 1.40,
+  prlmean   = 0.712,
+  prtmean   = 0.9,
+!  ptot      = 8256
+!  ptot      = 91754.47
+
+  alphad    = 0.0,
+  betad     = 0.0,
+  fark      = 0.00005,
+  faro      = 1.,
+  pex       = 0.
+  }
+
+
+! STRUcture
+!  {
+!  eigen    = "f5/f5modes_eigens.dat"
+!  smodes   = 7:8:9:10:11:12:13
+!  pmass    = 0.12764
+!  vf       = 0.2
+!  mratio   = 225.82
+!  fim      = "f5/f5_fim.dat"  
+!  initc    = "f5/f5_initc.dat"  
+!  }
+
+! STRUcture
+!  {
+!  eigen    = "agard/agard_eigens.dat"
+!  smodes   = 1:2:3:4:5
+!
+!!  [slug]
+!  pmass    = 0.12764
+!  !!  [kg x 14.594]
+!  !!  pmass    = 1.86277
+!
+!  vf       = 0.2
+!  mratio   = 225.82
+
+!!OBSOLETE  [slug/ft^3]
+!!  rhoair   = 1.23E-4
+!!  rhoair   = 0.0634
+!
+!  frequency   = 38.086
+!  }
+
+
+ geometry
+  {
+  chordroot = 1.0
+  chordtip  = 1.0
+  span      = 0.5
+!!  scal2m = 0.0254
+!  scal2m = 0.083333
+  }
+
+!  character(len=20), parameter :: &
+!  chord_code  = "CHORDROOT", span_code   = "SPAN", tip_code    = "CHORDTIP", scal_code   = "SCAL2M"
+
+ reference
+  {
+  length      = 1.0
+  pressure    = 1.0
+  density     = 1.0
+  temperature = 1.0
+  }
+
+ NUMERICS
+  {
+  cflf   = -2.0,
+  vis2   = 1.,
+  vis4   = 2.,
+  adis   = 1.,
+  hmf    = 0.0
+  psensor= 1,
+  mgtype = 1,
+  smoo   = 0.,
+!  icstp = 5
+!  icdis = 3
+!  cstp   = 0.2742:0.2067:0.5020:0.5142:1.0
+  cstp   = 0.25:0.16667:0.375:0.5:1.0
+!  cstp   = 0.0695:0.1602:0.2898:0.5060:1.0
+!  cdis   = 1.0:1.0:1.0:1.0:1.0
+  cdis   = 1.0:0.0:0.56:0.0:0.44
+  smoopi = 0.0,
+  smoopj = 0.0,
+  smoopk = 0.0,
+  ksmoop = 1,
+  kvis   = 0,
+  nvis   = 0,
+  cflc   = 2.,
+  hmc    = 0.0
+  fbc    = 1.,
+  fcoll  = 1.,
+  fadd   = 1.
+  vis0   = 1.0
+  lcyc   = 2
+
+  eqntype = 'n'
+  distype = 'c'
+  dissip  = 'scalar'
+!  dissip  = 'matrix'
+  limfac  = 5.
+  epsentr = 0.05
+  }
+
+ FILENAME
+ {
+!  probe    = "agard/probe.dat"
+!  trace    = "agard/trace.dat"
+!  arma     = "agard/arma96v2a.dat"
+!  rom      = "train/p85v3a_rec.dat"
+!  auxiliary= "input"
+ }
+ 
+! ROMODEL
+! {
+!  mode     = execution
+!  data     = "train"
+!  rom      = "train/p85v3a_rec.dat"
+!  arma     = "train/p85v3a_arma.dat"
+!  vf       = 0.4
+!  armana   = 2
+!  armanb   = 2
+!  armab0   = 0
+! }
+
+ UNSTEADY
+ {
+  KAPPA    = 0.0814
+  XCG      = 0.0, 0.0, 0.0
+  AVG6DOF  = 0.0:0.0:0.0:0.0:0.44:0.0
+  AMP6DOF  = 0.0:0.0:0.0:0.0:0.44:0.0
+ }
+
+! Xsection
+! {
+! error pt= 0.0, 3.0,  0.0,   dir=0.0, 1.0, 0.0, id=1, group=1
+!  pt= 0.0,  0.500000, 0.0,   dir=0.0, 1.0, 0.0, id=1, group=1
+!  pt= 0.0,  10.000000, 0.0,   dir=0.0, 1.0, 0.0, id=2, group=1
+!  pt= 0.0,  20.000000, 0.0,   dir=0.0, 1.0, 0.1, id=3, group=1
+!  pt= 0.0,  50.000000, 0.0,   dir=0.0, 1.0, 0.0, id=4, group=1
+!  pt= 0.0,  15.423002, 0.0,   dir=0.0, 1.0, 0.0, id=5, group=1
+! }
+
+ Probe
+ {
+!  pt= 40.0,  25.0, -0.2,  id=1, group=1
+!  pt= 40.0,  25.0,  0.2,  id=2, group=1
+!  pt= 35.0,  20.0, -0.2,  id=3, group=1
+!  pt= 35.0,  20.0,  0.2,  id=4, group=1
+ }
+
+
+  CFD
+  {
+   file = "cylinder/cylinder.p3d",     class=plot3d, type=ascii, cmp.id=1, active=1
+  }
+
+! CSD
+!  {
+!    file= "agard/agard_str.dat",  class=tecplot, type=ascii, cmp.id=1 
+!    file= "f5/f5_csdfem.dat",  class=tecfem,  type=ascii, cmp.id=1
+!    file= "f5/f16_csdfem.dat", class=tecfem,  type=ascii, cmp.id=2
+!  }
+
+ MESH
+  {
+    file= "cylinder/cylinder05_11122.pin", class=mgaero, type=ascii, cmp.id = 1
+  }
+
+! DRAGFACE
+!  {
+!      file= "box.tec",  class=tecfem, type=ascii, cmp.id = 1
+!      file= "midf.pin",  class=mgaero, type=ascii, cmp.id = 1
+!  }
+
+ DOMAIN
+  {
+!
+! agard.pin
+!
+
+  xbound = ( -10.00, 18.00 )  bc_type = ( -20, -20)
+  ybound = (   0.00,  0.50 )  bc_type = ( -60, -60)
+  zbound = ( -12.00, 12.00 )  bc_type = ( -20, -20)
+
+! agard2.pin
+!  xbound = ( -40.0, 128.0 )  bc_type = ( -20, -20)
+!  ybound = (   0.0,  88.0 )  bc_type = ( -50, -20)
+!  zbound = ( -32.0,  32.0 )  bc_type = ( -20, -20)
+
+  }
+
+!PCHIRP
+!{
+!
+! amp    avg:       w_n     Wref:  LAG:   NCYC:    LOW    UPP   Scan
+!
+!  0.2:   0.0:    9.5992:  38.086:  0.0:  999.9:    0.25:  4.0 : 1.5
+!  0.2:   0.0:   38.1650:  38.086:  0.0:  999.9:    0.5 :  2.5 : 1.0
+!  0.2:   0.0:   48.3482:  38.086:  0.0:  999.9:    0.5 :  2.0 : 1.0
+!  0.2:   0.0:   91.5448:  38.086:  0.0:  999.9:    0.5 :  1.5 : 1.0
+!  0.2:   0.0:  118.1132:  38.086:  0.0:  999.9:    0.5 :  1.2 : 1.0
+!}
+
+!PFIM
+!{ 
+! a_i     AVG       wn        wref     lag  ncycle   ai     wc      tau
+!  0.1:   0.0:     9.5992:  38.086:  0.0:  999.9:  -0.1:  3.05:   0.0
+!  0.1:   0.0:    38.1650:  38.086:  0.5:  999.9:  -0.1:  3.05:   0.0
+!  0.1:   0.0:    48.3482:  38.086:  0.5:  999.9:  -0.1:  3.05:   0.0
+!  0.1:   0.0:    91.5448:  38.086:  0.5:  999.9:  -0.1:  3.05:   0.0
+!  0.1:   0.0:   118.1132:  38.086:  0.5:  999.9:  -0.1:  3.05:   0.0
+!}
+
+
+!PFIM
+!{ 
+!
+! FIM FOR CT
+! a_i    AVG:      wn      wref    lag   ncycle   ao     wc     tau
+!
+!  0.0:   0.0:     0.0:     1.0:    0.0:  999.9:   0.0:   0.0:   0.0
+!  0.0:   0.0:     0.0:     1.0:    0.0:  999.9:   0.0:   0.0:   0.0
+!  0.0:   0.0:     0.0:     1.0:    0.0:  999.9:   0.0:   0.0:   0.0
+!  0.0:   0.0:     0.0:     1.0:    0.0:  999.9:   0.0:   0.0:   0.0
+!  0.0043633:  0.0102:    0.0:     1.0:    0.0:  999.9:   0.0:   0.0:   0.0
+!  0.0:   0.0:     0.0:     1.0:    0.0:  999.9:   0.0:   0.0:   0.0
+!}
+
+
+!PSINMOD
+!{
+!
+! amp     AVG :   w_n        wref    lag   ncycle  dwn/wn   PLOW/pi PUPP/pi  
+!
+!  0.05:   0.0:     9.5992:  38.086:  0.0:  999.9:  0.25:    -0.02:   0.02
+!  0.05:   0.0:    38.1650:  38.086:  0.0:  999.9:  0.25:    -0.08:   0.08
+!  0.05:   0.0:    48.3482:  38.086:  0.0:  999.9:  0.20:    -0.08:   0.08
+!  0.05:   0.0:    91.5448:  38.086:  0.0:  999.9:  0.20:    -0.16:   0.16
+!  0.05:   0.0:   118.1132:  38.086:  0.0:  999.9:  0.10:    -0.32:   0.32
+!}
+
+
+!PPHASEMOD
+!{
+!
+! amp     AVG:    w_n       wref     lag   ncyc   dwn/wn  ns   tcut-in  tcut-off 
+!
+!  0.05:   0.0:     9.5992:  38.086:  0.0:  36.0:  0.755:  2.0:  0.50:  0.50
+!  0.05:   0.0:    38.1650:  38.086:  0.0:  36.0:  0.55:   2.0:  0.70:  0.70
+!  0.05:   0.0:    48.3482:  38.086:  0.0:  36.0:  0.425:  2.0:  0.90:  0.90
+!  0.05:   0.0:    91.5448:  38.086:  0.0:  36.0:  0.20:   2.0:  1.10:  1.10
+!  0.05:   0.0:   118.1132:  38.086:  0.0:  36.0:  0.125:  2.0:  1.30:  1.30
+!}
+
+PICOND
+{
+! I.C. of modal values
+!  t      u      du            mf
+!
+   0.0:   0.0:   1.0410e-3 :   0.0
+   0.0:   0.0:   5.7030e-4 :   0.0
+   0.0:   0.0:   8.9820e-4 :   0.0
+   0.0:   0.0:   2.8846e-4 :   0.0
+   0.0:   0.0:   4.2313e-4 :   0.0
+}
+
+end
+

@@ -1,0 +1,179 @@
+#.SILENT:
+#
+#######################################
+#
+# LOCATION OF GLOBAL LIBRARY
+#
+GLO    := $(HOME)/fcode
+MYCODE =  $(shell printenv MYCODE)
+
+ifeq ($(MYCODE), $(NULL))
+  export MYCODE:=$(GLO)
+  $(info $(MYCODE) )
+endif
+#
+INCG   = $(MYCODE)/inc
+MODG   = $(MYCODE)/mod
+LIBG   = $(MYCODE)/lib
+#
+#
+########################################
+#
+# LOCATION OF LOCAL FILES
+#
+INCDIR = ../inc
+MODDIR = ../mod
+BINDIR = ../bin
+LIBDIR = ../lib
+#
+#VPATH  = ../srcf90
+#
+#$(info INCG=$(INCG) )
+#$(info LIBG=$(LIBG) ) 
+#$(info MODG=$(MODG) ) 
+#$(info INC=$(INCDIR) ) 
+#$(info MOD=$(MODDIR) ) 
+#$(info LIB=$(LIBDIR) )
+#$(info REALPATH $(realpath ../) )
+
+PARENT = $(realpath ../)
+
+#ifeq ($(PARENT),$(MYCODE))
+#$(info PARENT == MYCODE)
+#endif
+#
+
+########################################
+#
+#  SETUP FORTRAN COMPILER, 
+#  CHOOSE ONE OF THE FOLLOWING
+#
+#FC = f90
+FC = gfortran
+#FC = g95
+
+########################################
+#
+# SETUP MPI COMPILER IF INVOKED: at command prompt, type
+# make install MPI=1 
+#
+ifdef MPI
+  $(info "MPI DEFINED")
+  FC = mpif90
+else
+  $(info "MPI NOT DEFINED")
+endif
+
+ifeq ($(FC), g95)
+#
+# COMPLIER OPTION FOR g95
+#
+  FFLAGS = -O2 -fzero -ftrace=full -fbounds-check -ffree-form -fno-underscoring
+  LINK   = $(FC)
+  ifneq ($(PARENT),$(MYCODE))
+#
+# ADD PATH TO GLOBAL LIBRARY  
+#
+    IFLAGS = -I$(INCDIR) -I$(MODDIR) -I$(MODG) -I$(INCG)
+  else
+    IFLAGS = -I$(INCDIR) -I$(MODDIR)
+  endif
+  PFLAGS =
+endif
+
+ifeq ($(FC), f90)
+#
+# COMPLIER OPTION FOR absoft fortran, f90/f95
+#
+# #FFLAGS = -O2 -cpu:p7 -YEXT_NAMES=LCS -YEXT_SFX=_ -X -Bstatic
+# #FFLAGS = -O2 -Rb -YEXT_NAMES=LCS -YEXT_SFX=_
+#
+  FFLAGS = -O2 -YEXT_NAMES=LCS -YEXT_SFX=_
+  LINK   = $(FC)
+  ifneq ($(PARENT),$(MYCODE))
+    PFLAGS = -p$(MODDIR) -p$(MODG) 
+    IFLAGS = -I$(INCDIR) -I$(INCG)
+  else
+    PFLAGS = -p$(MODDIR)
+    IFLAGS = -I$(INCDIR)
+  endif
+endif
+
+ifeq ($(FC), gfortran)
+#
+# COMPLIER OPTION FOR GFORTRAN
+#
+## FOR gfortran -finit-local-zero
+  FOMP   = 
+#-fopenmp
+  FFLAGS = -O2 -fno-underscoring  -fbounds-check $(FOMP)
+  LINK   = $(FC) $(FOMP)
+  ifneq ($(PARENT),$(MYCODE))
+    IFLAGS = -I$(INCDIR) -I$(MODDIR) -I$(INCG) -I$(MODG)
+  else
+    IFLAGS = -I$(INCDIR) -I$(MODDIR)
+  endif
+  PFLAGS =
+endif
+
+ifeq ($(FC), mpif90)
+###################################################################
+#
+# MPIF90 ABSOFT FORTRAN
+# FFLAGS = -O2 -cpu:p7 -YEXT_NAMES=LCS -YEXT_SFX=_ -X -Bstatic
+# FFLAGS = -O2 -YEXT_NAMES=LCS -YEXT_SFX=_
+#
+###################################################################
+
+  FOMP   = -fopenmp
+  FFLAGS = -O2 -fno-underscoring  -fbounds-check  $(FOMP)
+  LINK   = $(FC) $(FOMP)
+  ifneq ($(PARENT),$(MYCODE))
+    IFLAGS = -I$(INCDIR) -I$(MODDIR) -I$(INCG) -I$(MODG) 
+  else
+    IFLAGS = -I$(INCDIR) -I$(MODDIR)
+  endif
+
+endif
+
+################################
+#
+#   LIBRARIES LOCATION
+#
+ifneq ($(PARENT),$(MYCODE))
+  LFLAGS = -L$(LIBDIR) -L$(LIBG)
+else
+  LFLAGS = -L$(LIBDIR)
+endif
+
+CC     = gcc
+CFLAGS =
+AR     = ar r
+RANLIB = ranlib
+
+#MYLIB  = -lbug -larma -lexe -lanim -lmgrid -lcvt -lrawg -lellp -lprep \
+#         -ltypeio -ltype -ljob -lxsect -lload -ltrig -lcsd -lutil -lio
+
+#MYLIB  = -lbug -larma -lexe -lanim -lmgrid -lcvt -lrawg -lellp -lprep -lhinge  \
+#         -ltypelib -ltypeio -ltypeops -ltype -lmgeo -ltree -loptim -ljob \
+#         -lsgnl -lxsect -lload -ltrig -lcsd -lmath -lutil -lfile -lio
+
+MYLIB  = -lbug -larma -lexe  -lmgrid   -lcvt  -lrawg -lellp -lprep \
+         -ltypelib -ltypeio  -ltypeops -ltype -lmgeo -loptim -ljob -lsgnl -lsamp -lload \
+         -ltrig -lcsd -lutil -lmath     -lloc -lfile -lio
+
+MYMPP  = -lmpp
+
+.SUFFIXES: .o .f90 .f
+
+.f90.o:
+	echo $(FC) -c $(FFLAGS) $(PFLAGS) $(IFLAGS) $< -o $@; \
+	$(FC) -c $(FFLAGS) $(PFLAGS) $(IFLAGS) $< -o $@
+
+.f.o:
+	echo $(FC) -c $(FFLAGS) $(PFLAGS) $(IFLAGS) $< -o $@; \
+	$(FC) -c $(FFLAGS) $(PFLAGS) $(IFLAGS) $< -o $@
+
+.c.o:
+	echo $(CC) -c $(CFLAGS) $< -o $@; \
+	$(CC) -c $(CFLAGS) $< -o $@; \

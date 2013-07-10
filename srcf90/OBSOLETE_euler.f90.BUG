@@ -1,0 +1,322 @@
+subroutine euler(b,itime,ncyc,mgl,mlvl,lres,lfir,lwork)
+!**********************************************************************************************
+!
+! USE RUNGE-KUTTA SIMPLIFIED 5-STAGE TIME STEPPING SCHEME TO SOLVE THE
+! ORDINARY DIFFERENTIAL EQUATIONS DISCRETED BY THE FINITE VOLUME METHOD.
+!
+! ACCELERATION TECHNIQUES INCLUDING LOCAL TIME STEP, RESIDUAL SMOOTH AND
+! MULTIGRID ARE USED. 
+!
+! IN MULTIGRID PART, FORCING TERM ARE ADDED TO THE RESIDUAL ON THE RIGHT HAND SIDE. 
+!
+! FOR UNSTEADY CALCULATION, TIME DERIVATIVES ARE INCORPORATED INTO THE
+! RESIDUAL ON THE RIGHT HAND SIDE TO USE THE SAME TIME STEPPING SCHEME FOR
+! STEADY/UNSTEADY CALCULATION.
+!
+!**********************************************************************************************
+!
+! DEVELOPEMNT HISTORY:
+!
+! 2011-08-31  added lwork for MPI operations
+!             lwork=.true. => subroutine handled by worker, otherwisem return without doing anything
+!  
+!**********************************************************************************************
+
+  use typelib4
+  implicit none
+  integer, parameter :: dp=kind(1.0d0)
+  type(mgrid), pointer :: b
+  integer, intent(in) :: itime 
+  integer, intent(in) :: ncyc,mlvl,mgl
+  logical, intent(in) :: lres, lfir, lwork
+!
+! LOCAL variables
+!
+  integer  :: i, j, k, m ! n , id
+  real(dp) :: fn, de, rt, lam !qq, eqq, 
+  real(dp) :: fcoll !, uu, vv, ww, ee
+  integer  :: nx,ny,nz,il,jl,kl,ib,jb,kb
+!  integer, dimension(3) :: icut
+
+! ******************************************************************
+
+  include 'debug.inc'
+!
+! ----- RETURN IF BLOCK DOES NOT BELONG TO CURRENT PID 
+!
+  if (.not. lwork) return
+
+  nx = b%ncell(1)
+  ny = b%ncell(2)
+  nz = b%ncell(3)
+  il = b%il
+  jl = b%jl
+  kl = b%kl
+  ib = b%ib
+  jb = b%jb
+  kb = b%kb
+
+  fcoll = 1.0d0
+
+! save the initial values on first entry to a coarser
+! mesh during the multigrid cycle
+
+  if (lfir) then
+    b%ws = b%w
+  end if
+
+! save the flow variables for the R-K scheme
+  do k=2,kl
+    do j=2,jl
+      do i=2,il
+        b%wn(i,j,k,:) = b%w(i,j,k,:)
+      end do
+    end do
+  end do
+
+  b%dw = 0.0d0
+  b%fw = 0.0d0
+
+  m = 1
+
+! ---  MULTISTAGE SCHEME
+
+  multistage: do while (m<=mstage)
+
+    fn = cstp(m)*cfl
+
+    !!! RELOCATED WITH OTHER BC ROUTINES
+    !!! call solidw(b)
+    ! --- COMPUTE THE ARTIFICIAL DISSIPATION
+
+    if (m<=mdissip) then
+      if (cdis(m) > 0.0d0) then
+         call dflux(b,m)
+      end if
+    end if
+
+    ! --- CALCULATE INVISCID FLUX
+
+    call eflux(b)
+
+    do k=2,kl
+      do j=2,jl
+        do i=2,il
+          b%dw(i,j,k,:) = b%dw(i,j,k,:) +b%fw(i,j,k,:)
+        end do
+      end do
+    end do
+    
+   !debug
+   !do k = 2,kl
+   !  do j = 2,jl
+   !    do i = 2,il
+   !      if (b%dw(i,j,k,1) .ne. b%dw(i,j,k,1) ) then
+   !        print *,"euler1 ijk",ncyc,mgl,mlvl,b%x(i,j,k,:)
+   !        print *,i,j,k,"dw",b%dw(i,j,k,1),"fw",b%fw(i,j,k,1)
+   !        stop
+   !      end if
+   !    end do
+   !  end do
+   !end do
+
+
+! for unsteady calculation, incorporate transient terms to the residual on 
+! the right hand side. Time integration use second-order backward difference,
+! for the first physical time step, first-order difference is used.
+
+    if (runtype==1) then
+      if (itime>1) then
+        do k=2,kl
+          do j=2,jl
+            do i=2,il
+              b%dw(i,j,k,:) = b%dw(i,j,k,:) + 0.5d0*b%cellvolume/dtstep&
+                                              *(3.0d0*b%w(i,j,k,:)-4.0d0*b%w1(i,j,k,:)+b%w2(i,j,k,:))
+            end do
+          end do
+        end do
+      else if(itime==1) then
+        do k=2,kl
+          do j=2,jl
+            do i=2,il
+              b%dw(i,j,k,:) = b%dw(i,j,k,:) + 0.5d0*b%cellvolume/dtstep &
+                                              *(b%w(i,j,k,:) -b%w1(i,j,k,:))
+            end do
+          end do
+        end do
+      end if
+    end if
+
+   !debug
+   !do k = 2,kl
+   !  do j = 2,jl
+   !    do i = 2,il
+   !      if (b%dw(i,j,k,1) .ne. b%dw(i,j,k,1) ) then
+   !        print *,"euler2 ijk",i,j,k,"dw",b%dw(i,j,k,1),"fw",b%fw(i,j,k,1)
+   !        stop
+   !      end if
+   !    end do
+   !  end do
+   !end do
+
+! ********************************************************
+! *                                                      *
+! *   modification of the residues on any coarser mesh   *
+! *                                                      *
+! ********************************************************
+    if (mgl .lt. mlvl) then        ! mgl>0 means in the coarser grid
+  
+      if (lfir.and.m.eq.1) then    ! for the coarse grid enter RK first time
+        do k=2,kl
+          do j=2,jl
+            do i=2,il
+              b%qf(i,j,k,:) = 0.0d0
+
+              ! ----  REMOVED::   if (abs(b%wr(i,j,k,1)) > 0.0d0) then
+              !
+              ! ----  NOTE: USE CELL MARKER TO IDENTIFY THOSE CELLS HAVING BEEN ASSIGNED %wr 
+              ! 
+
+              if (abs(b%wr(i,j,k,1)) > 0.0d0) then
+                b%qf(i,j,k,:) = fcoll*b%wr(i,j,k,:) -b%dw(i,j,k,:)
+              end if
+
+              !if ( b%marker(i,j,k)==1 ) then
+              !  b%qf(i,j,k,:) = fcoll*b%wr(i,j,k,:) -b%dw(i,j,k,:)
+              !end if
+
+              b%dw(i,j,k,:) = b%dw(i,j,k,:) +b%qf(i,j,k,:)
+            end do
+          end do
+        end do
+      else 
+        do k=2,kl
+          do j=2,jl
+            do i=2,il
+              b%dw(i,j,k,:) = b%dw(i,j,k,:) +b%qf(i,j,k,:)
+            end do
+          end do
+        end do
+      end if
+
+      if (runtype==1) then 
+        do k=2,kl
+          do j=2,jl
+            do i=2,il
+              de = fn*b%vdtim(i,j,k)
+              if(vt == 1) de = fn*b%dtim
+              lam = 1.0d0+de*3.0d0/2.0d0/dtstep
+              b%dw(i,j,k,:) = b%dw(i,j,k,:)/lam
+            end do
+          end do
+        end do 
+      end if
+
+    end if
+
+   !debug
+   !do k = 2,kl
+   !  do j = 2,jl
+   !    do i = 2,il
+   !      if (b%dw(i,j,k,1) .ne. b%dw(i,j,k,1) ) then
+   !        print *,"euler3 ijk",i,j,k,"dw",b%dw(i,j,k,1),"fw",b%fw(i,j,k,1)
+   !        stop
+   !      end if
+   !    end do
+   !  end do
+   !end do
+
+! *****************************************************************
+! *                                                               *
+! *                      end of modification                      *
+! *                                                               *
+! *****************************************************************
+
+
+! if it's solid cell, let the variables unchange
+
+    do k=2,kl
+      do j=2,jl
+        do i=2,il
+          b%dw(i,j,k,:) = b%dw(i,j,k,:)*real(b%blank(i,j,k),dp)
+        end do
+      end do
+    end do
+
+! for multigrid algorithm, just calculate the residual, do not update the flow variables
+    if (lres) return
+
+! multiple the time step
+    do k=2,kl
+      do j=2,jl
+        do i=2,il
+          de = fn*b%vdtim(i,j,k)/b%cellvolume
+          if(vt==1) de = fn*b%dtim/b%cellvolume
+          b%dw(i,j,k,:) = de*b%dw(i,j,k,:)
+        end do
+      end do
+    end do
+! Residual smoothing, only on odd stages
+    !if(mod(m,2)/=0) then
+    call psmoo_old(b)
+    !end if
+
+! update flow variables
+
+    do k=2,kl
+      do j=2,jl
+        do i=2,il
+          lam = 1.0d0
+          if (runtype.eq.1.and.mgl.eq.mlvl) then                  
+            de = fn*b%vdtim(i,j,k)
+            if (vt == 1) de = fn*b%dtim
+            lam = 1.0d0+de*3.0d0/2.0d0/dtstep
+          end if
+          b%w(i,j,k,:) = b%wn(i,j,k,:) -b%dw(i,j,k,:)/lam
+          !qq           = sum(b%w(i,j,k,2:4)**2.0d0)
+          !eqq          = 0.5d0*qq/b%w(i,j,k,1)
+          !b%p(i,j,k)   = (gamma -1.0d0)*dim(b%w(i,j,k,5),eqq)
+          call depvars(b%ib, b%jb, b%kb, i,j,k, 5, b%w, b%p)
+        end do
+      end do
+    end do
+
+! compute for the next stage
+    m = m + 1
+!! 
+!! update boundary condition, only bc_cutcell & bcond
+!!
+
+    call bc_cutcell(b)
+!!!!    call bc_embed(b,mgl)
+    call bcond(b)
+!!!!    call bc_overlap(b,mgl)
+
+  end do multistage
+!
+! to calculate the average residual
+! The measure of convergence is the residual for the density
+! defined as the root mean square value of delta_rho/delta_t
+!
+  if (debug) print *,"LEVEL SERIAL ", b%level, b%serial, " SIZE ", size(b%rtrms), "NCYC ", ncyc
+
+  b%rtrms(ncyc) = 0.0d0
+
+  do k=2,b%kl
+    do j=2,b%jl
+      do i=2,b%il
+        de = cfl*b%vdtim(i,j,k)
+        if (vt==1) de = cfl*b%dtim
+        rt = 0.0d0
+        if(b%blank(i,j,k) /= 0) then
+           rt = b%dw(i,j,k,1)/de
+        end if
+        b%rtrms(ncyc) = b%rtrms(ncyc) + rt**2.0d0
+      end do
+    end do
+  end do
+
+  b%rtrms(ncyc) = sqrt(b%rtrms(ncyc)/real(nx*ny*nz,dp))
+
+  return
+end subroutine euler

@@ -1,0 +1,970 @@
+subroutine ibforce(b)
+
+!****************************************************************************
+!
+! INTERPOLATE STATE VARIABLES AT SOLID CELLS
+! USING CURVATURE-CORRECTED SYMMETRY TECHNIQUE
+!
+!****************************************************************************
+
+  use typemark
+  use typelib
+  use typepara
+  use ctrlib
+
+  implicit none
+  integer, parameter :: dp=kind(1.0d0), nval=5
+  type(mgrid), intent(inout) :: b
+!
+! local variables
+!
+  integer :: i, j, k, ic, jc, kc, idc, idd
+  integer :: nshft, m, n, id, kk 
+  integer :: err_cel, err_shft
+  integer :: icel(3),shft(3),tarcel(3), shft1(3),shft0(3)
+  integer, dimension(:,:), pointer :: nc,nc8,nol
+  integer, dimension(:),   pointer :: nmarkt,nmark8
+  real(dp), dimension(3) :: ppt, eta, xi
+  real(dp) :: val(8,nval)
+  real(dp) :: fac(8), force(8,3), vs(8,3)!, ff(8,3)
+  real(dp), dimension(:,:,:), pointer :: facid, xid
+  real(dp), dimension(:,:),   pointer :: shftid
+  real(dp), dimension(:,:),   pointer :: invx=>null()
+  real(dp), dimension(:,:),   pointer :: matx=>null()
+  real(dp), dimension(:,:),   pointer :: ff  =>null()
+  type(ibnode), pointer :: tmp
+  type(ibcell), pointer :: celtr
+  logical :: founda
+! *****************************************************************************
+
+  if(.not. associated(b%zibnode)) return
+
+! dx   = b%cellvolume**(1.0/3.0d0)
+! diag = sqrt(3.0d0)*dx
+
+!
+! RETRIEVE IBCELL ONE BY ONE, starting from the head pointer
+!
+  allocate(shftid(size(b%zibnode),3))
+  allocate(nc(size(b%zibnode),100), nol(size(b%zibnode),8),nc8(size(b%zibnode),16) )
+  allocate(nmarkt(size(b%zibnode)),nmark8(size(b%zibnode)))
+  allocate(facid(size(b%zibnode),100,8), xid(size(b%zibnode),100,3))
+
+  facid   = 0.0d0 ! interpolation coefficient
+  nmarkt  = 0     ! number of markers used in interpolation
+  nmark8  = 0     ! number of markers used in interpolation
+  nc      = -1    ! marker id contained in one corner cell
+  nc8     = -1    ! marker id contained in one corner cell
+  nshft   = 0     ! number of corner cells containing marker points 
+  shftid  = 0     ! node of shift cells
+  nol     = 1     ! number of cells containing bc marker which share common node
+
+!!  celtr => b%zibcell
+
+!!  do while (associated(celtr))
+
+!    icel = celtr%icell
+    !print *, " CELL ID ", celtr%id, celtr%icell
+    !print *, " CELL #OF MARKER             ", celtr%imark
+    !print *, " CELL ASSOCIATED MARKER LIST ", associated(celtr%markid)
+    !if (associated(celtr%markid)) print *," MARKER ID ", celtr%markid
+    !print *," PRINTING MARKER LOCATIONS "
+
+!    found = 0
+!!    do m=1, celtr%imark
+!!      id   =  celtr%markid(m)
+
+    do m=1, size(b%zibnode)
+      id   =  m
+      tmp  => b%zibnode(id)
+      ppt  =  tmp%xb
+!      print *, m, ppt
+      call eval_x2cell(ppt, b%ori,b%gcori,b%icm, b%lowcell, b%uppcell, tarcel, eta, err_cel)
+      if(err_cel /= 0) then
+         print *, "error with eval_x2cell in ibforce !"
+      end if
+      call shft_cell(shft, xi, b%lowcell, b%uppcell, tarcel, eta, err_shft)
+      if(err_shft /= 0) then
+         print *, "error with shft_cell in ibforce !"
+      end if
+!      print *,id,icel,tarcel,shft
+
+      call trilinear_factor(xi(1), xi(2), xi(3), fac)
+
+      val = reshape( b%dw(shft(1):shft(1)+1,&
+                          shft(2):shft(2)+1,&
+                          shft(3):shft(3)+1,1:nval), (/8,nval/))
+
+      b%zibnode(id)%fb(:)  = (/ (sum(val(:,n)*fac), n=2,nval-1 ) /)
+
+  !    if(b%zibnode(id)%fb(1) > 100000.0d0) print *,shft,b%zibnode(id)%fb(:)
+      
+      founda = .false.
+      if(nshft > 0) then
+        do n=1,nshft
+          if(all(shft == shftid(n,:))) then
+            founda = .true.
+            ! for each shft cell, find 8 marker points contained inside
+            if(nmarkt(n) < 100) then
+              nmarkt(n)            = nmarkt(n)+1
+              nc(n,nmarkt(n))      = id  ! found a new marker which is contained in a existing 8 corner points
+              facid(n,nmarkt(n),:) = fac
+              xid  (n,nmarkt(n),:) = xi
+            end if
+          end if
+        end do
+      end if
+
+      if(.not. founda) then
+       ! found a new shft point
+        nshft                       = nshft + 1
+        shftid(nshft,:)             = shft
+        nmarkt(nshft)                = 1
+        nc(nshft,nmarkt(nshft))      = id  ! found a new marker which is contained in a new 8 corner points
+        facid(nshft,nmarkt(nshft),:) = fac
+        xid  (nshft,nmarkt(nshft),:) = xi
+      end if
+
+    end do
+
+!!    celtr=>celtr%nxt
+!!   end do
+
+   ! count the number of cells (containing markers) sharing common node 
+   do m = 1,nshft
+     shft = shftid(m,:)
+     idc = 0
+     do k=shft(3),shft(3)+1
+        do j=shft(2),shft(2)+1
+           do i=shft(1),shft(1)+1
+              idc = idc + 1
+
+              do n = m+1,nshft
+                 shft1 = shftid(n,:)
+                 idd = 0
+                 do kc=shft1(3),shft1(3)+1
+                    do jc=shft1(2),shft1(2)+1
+                       do ic=shft1(1),shft1(1)+1
+                          idd = idd+1
+                          if(i==ic.and. j==jc.and. k==kc) then
+                             nol(n,idd) = nol(n,idd)+1
+                             nol(m,idc) = nol(m,idc)+1
+
+                             ! in case of less than 8 markers in one cell-centered cell
+                             ! add markers from neighbour cells to it
+                             if(nmarkt(m) < 16) then
+                           !    if(shft(1) == shft1(1) .or. shft(2) == shft1(2) .or. shft(3) == shft1(3)) then
+                          
+                                 kk=0
+                             
+                                 ! to avoid picking the markers on one line, 
+                                 ! add more markers to form a large sampling group
+                                 do while (kk<nmarkt(n)) 
+                              !  do while (nmarkt(m) < 8)
+                                   kk=kk+1
+                                   if(nc(n,kk) > 0) then
+                                     nmarkt(m) = nmarkt(m)+1                                
+                                     nc(m,nmarkt(m)) = nc(n,kk)
+                                     
+                                     xi=xid(n,kk,:)+(shft1(:)-shft(:))
+                                     call trilinear_factor(xi(1), xi(2), xi(3), fac)
+
+                                     facid(m,nmarkt(m),:) = fac
+                                     !  print *, m,xi,shft,shft1
+                                     !  print *, m,fac
+                                     !  print *,m,nmarkt(m),n,kk,b%zibnode(nc(m,nmarkt(m)))%xb
+                                   else
+                                     exit
+                                   end if
+                                   if(nmarkt(m)==16) exit
+                                
+                                 end do
+                              ! end if
+                             end if
+
+                          end if
+                       end do
+                    end do
+                 end do
+                 
+              end do
+            end do
+        end do
+     end do
+   end do
+
+
+   ! pick 8 markers out of nmarkt associated the cell-centered cell
+   do m = 1, nshft
+ !     kk=1
+ !     if(nmarkt(m) > 15) kk = nmarkt(m)/16
+      nmark8(m) = 0
+      do n = 1,nmarkt(m) !,kk
+        nmark8(m)            = nmark8(m) +1
+        nc8(m,nmark8(m))     = nc(m,n)
+        facid(m,nmark8(m),:) = facid(m,n,:)
+
+!        print *,m,n,b%zibnode(nc(m,n))%xb
+        if(nmark8(m) == 16 ) exit
+      end do
+     !if(nmark8(m) < 8) then
+     !   shft = shftid(m,:)
+     !   print *, m,b%x(shft(1),shft(2),shft(3),:)+b%cellvolume**(1.0/3.0d0)/2.0d0
+
+     !   print *,m,n,(b%zibnode(nc(m,n))%xb,n=1,nmark8(m))
+     !   print *, "less than 8 marker associated with one cell:", m,nmark8(m),nc8(m,1:nmark8(m))
+     !end if
+
+   end do
+ 
+!  compute the interpolation coefficient and do backward interpolation.
+   do m = 1, nshft
+
+    ! if(nmark8(m) < 16) cycle
+
+     shft = shftid(m,:)
+     if(nmark8(m) < 16) then
+        print *, "less than 16 marker associated with one cell:", m,shft,nmark8(m),nc(m,1:nmark8(m))
+     end if
+     allocate( matx(nmark8(m),8), invx(8,nmark8(m)), ff(nmark8(m),3))  !, invx(8,8))
+
+     ! form the coefficient matrix
+     write(*,*) "coefficient:"
+     do n = 1, nmark8(m)
+        id  = nc8(m,n)
+        matx(n,:) = facid(m,n,:)
+        write(*,'(I4,8e16.8)') m,matx(n,:)
+        ff(n,:)   = b%zibnode(id)%fb(:)
+!        print *,m,id,b%zibnode(id)%xb
+     end do
+
+     ! inverse the matrix
+     call svdinv(matx,nmark8(m),8)
+     if (nmark8(m)/=8) then
+        invx = transpose(matx)
+     else
+        invx = matx
+     end if
+
+     ! compute the force
+     force(:,1:3) = matmul(invx,ff(1:nmark8(m),1:3))
+   !  if(force(1,1)>10.0d0) then
+       print *, "force :"
+       print *,m
+       write(*,'(8e16.8)') force
+       write(*,*) "inverse:"
+       write(*,'(8e16.8)') matx
+       print *
+
+   !  end if
+        
+     ! add force to the cell-centered cell
+     idc = 0
+     do k=shft(3),shft(3)+1
+        do j=shft(2),shft(2)+1
+           do i=shft(1),shft(1)+1
+              idc = idc + 1
+              !print *, i,j,k,nol(m,idc),b%dw(i,j,k,2:4),force(idc,1:3)/real(nol(m,idc),dp)
+              !if(b%blank(i,j,k) /= 0) &
+              b%dw(i,j,k,2:4) = b%dw(i,j,k,2:4) - force(idc,1:3)/real(nol(m,idc),dp)
+          end do
+        end do
+     end do
+
+     deallocate(matx,invx,ff)
+
+   end do
+
+   deallocate(shftid,nc,nc8,facid, nol,nmarkt,nmark8,xid)
+
+
+  return
+end subroutine ibforce
+
+subroutine bc_velocity(b)
+
+!****************************************************************************
+!
+!
+!****************************************************************************
+
+  use typelib4
+  use typepara
+  use ctrlib
+
+  implicit none
+  integer, parameter :: dp=kind(1.0d0), nval=5
+  type(mgrid), intent(inout) :: b
+!
+! local variables
+!
+  integer :: i, found
+  integer :: ic, jc, kc, m, n, zz, id, jx, ctr
+  integer :: is, js, ks, err_cel, err_shft
+  integer :: isol(3), icut(3), icut0(3)
+  real(dp), dimension(3) :: nvec, ppt, qb, pt
+  real(dp), dimension(5) :: u1,u2,uc,us
+  real(dp), dimension(:), pointer :: dist
+  real(dp) :: dx,x1,x2,xc,xs,pint,rho
+! *****************************************************************************
+
+  dx   = b%cellvolume**(1.0/3.0d0)
+  allocate( dist(b%nmir) )
+  dist = 0.0d0
+
+  do m = 1,b%nmir
+    zz   = b%z(m)%zz
+    isol = b%z(m)%scid
+    icut = b%z(m)%ccid
+    id   = b%z(m)%faceid
+    ppt  = b%z(m)%psurf
+
+    if (approxbc) then
+       ppt  = b%z(m)%pnew
+       nvec = b%z(m)%norv
+       qb   = b%z(m)%vel/vel_fs   ! normalize the boundary velocity by freestream velocity
+    else
+       ppt  = b%z(m)%psurf
+       nvec = b%z(m)%nvec
+       qb   = 0.0d0 
+    end if
+
+    ic = icut(1)
+    jc = icut(2)
+    kc = icut(3)
+
+    is = isol(1)
+    js = isol(2)
+    ks = isol(3)
+
+    !print *, id, nvec,qb
+    us = b%w(is,js,ks,:)
+    uc = b%w(ic,jc,kc,:)
+
+    if(id == 1) then
+       x1      = ppt(1)
+       u1      = b%w(ic,jc,kc,:)
+       u1(2:4) = qb
+       xc      = b%x(ic,jc,kc,1) + dx/2.0d0
+       xs      = b%x(is,js,ks,1) + dx/2.0d0
+       x2      = b%x(ic+1,jc,kc,1) + dx/2.0d0
+       u2      = b%w(ic+1,jc,kc,:)
+       !if(abs(xc-x1) > dx) cycle
+       dist(m) = xc - x1
+
+       uc = u1+(xc-x1)/(x2-x1)*(u2-u1) 
+       us = u1+(xs-x1)/(x2-x1)*(u2-u1) 
+
+       pint = b%p(ic+1,jc,kc)
+
+    else if(id == 4) then
+       x2      = ppt(1)
+       u2      = b%w(ic,jc,kc,:)
+       u2(2:4) = qb
+       xc      = b%x(ic,jc,kc,1) + dx/2.0d0
+       xs      = b%x(is,js,ks,1) + dx/2.0d0
+       x1      = b%x(ic-1,jc,kc,1) + dx/2.0d0
+       u1      = b%w(ic-1,jc,kc,:)
+       !if(abs(xc-x2) > dx) cycle
+       dist(m) = x2 - xc
+
+       uc = u1+(xc-x1)/(x2-x1)*(u2-u1) 
+       us = u1+(xs-x1)/(x2-x1)*(u2-u1) 
+       pint = b%p(ic-1,jc,kc)
+       
+    else if(id == 2) then
+       x1      = ppt(2)
+       u1      = b%w(ic,jc,kc,:)
+       u1(2:4) = qb
+       xc      = b%x(ic,jc,kc,2) + dx/2.0d0
+       xs      = b%x(is,js,ks,2) + dx/2.0d0
+       x2      = b%x(ic,jc+1,kc,2) + dx/2.0d0
+       u2      = b%w(ic,jc+1,kc,:)
+       !if(abs(xc-x1) > dx) cycle
+       dist(m) = xc - x1
+
+       uc = u1+(xc-x1)/(x2-x1)*(u2-u1) 
+       us = u1+(xs-x1)/(x2-x1)*(u2-u1) 
+       pint = b%p(ic,jc+1,kc)
+
+    else if(id == 5) then
+       x2      = ppt(2)
+       u2      = b%w(ic,jc,kc,:)
+       u2(2:4) = qb
+       xc      = b%x(ic,jc,kc,2) + dx/2.0d0
+       xs      = b%x(is,js,ks,2) + dx/2.0d0
+       x1      = b%x(ic,jc-1,kc,2) + dx/2.0d0
+       u1      = b%w(ic,jc-1,kc,:)
+       !if(abs(xc-x2) > dx) cycle
+       dist(m) = x2 - xc
+
+       uc = u1+(xc-x1)/(x2-x1)*(u2-u1) 
+       us = u1+(xs-x1)/(x2-x1)*(u2-u1) 
+       pint = b%p(ic,jc-1,kc)
+
+    else if(id == 3) then
+       x1      = ppt(3)
+       u1      = b%w(ic,jc,kc,:)
+       u1(2:4) = qb
+       xc      = b%x(ic,jc,kc,3) + dx/2.0d0
+       xs      = b%x(is,js,ks,3) + dx/2.0d0
+       x2      = b%x(ic,jc,kc+1,3) + dx/2.0d0
+       u2      = b%w(ic,jc,kc+1,:)
+       !if(abs(xc-x1) > dx) cycle
+       dist(m) = xc - x1
+
+       uc = u1+(xc-x1)/(x2-x1)*(u2-u1) 
+       us = u1+(xs-x1)/(x2-x1)*(u2-u1) 
+       pint = b%p(ic,jc,kc+1)
+
+    else if(id == 6) then
+       x2      = ppt(3)
+       u2      = b%w(ic,jc,kc,:)
+       u2(2:4) = qb
+       xc      = b%x(ic,jc,kc,3) + dx/2.0d0
+       xs      = b%x(is,js,ks,3) + dx/2.0d0
+       x1      = b%x(ic,jc,kc-1,3) + dx/2.0d0
+       u1      = b%w(ic,jc,kc-1,:)
+       !if(abs(xc-x2) > dx) cycle
+       dist(m) = x2 - xc
+
+       uc = u1+(xc-x1)/(x2-x1)*(u2-u1) 
+       us = u1+(xs-x1)/(x2-x1)*(u2-u1) 
+       pint = b%p(ic,jc,kc-1)
+
+    end if
+
+    found = 0
+    do jx = 1,m-1
+      icut0 = b%z(jx)%ccid
+      if(all(icut == icut0)) then
+        found = 1
+        if(dist(m) < dist(jx)) then
+           b%w(ic,jc,kc,2:4) = uc(2:4)
+           !if(b%blank(is,js,ks) ==0) b%w(is,js,ks,2:4) = us(2:4)
+           !print *,m,jx,dist(m),dist(jx)
+        end if
+        exit
+      end if
+    end do
+
+    !print *, u1(2:4),u2(2:4)
+    !print *, uc(2:4),us(2:4)
+    !print *
+
+    if(found == 0) then
+       b%w(ic,jc,kc,2:4) = uc(2:4)
+       !if(b%blank(is,js,ks) ==0) b%w(is,js,ks,2:4) = us(2:4)
+    end if
+    !b%p(ic,jc,kc)    = pint
+    !b%w(ic,jc,kc,1)   = rho
+    !call depvars( b%w(ic,jc,kc,:), b%p(ic,jc,kc))
+    !b%w(ic,jc,kc,5)   = pint/(gamma-1.0d0)+0.5d0*sum(uc(2:4)**2.0d0)/uc(1)
+  end do
+
+  return
+end subroutine bc_velocity
+
+
+subroutine force_int(b)
+
+!****************************************************************************
+!
+! INTERPOLATE STATE VARIABLES AT SOLID CELLS
+! USING CURVATURE-CORRECTED SYMMETRY TECHNIQUE
+!
+!****************************************************************************
+
+
+  use typelib4
+  use typepara
+  use ctrlib
+
+  implicit none
+  integer, parameter :: dp=kind(1.0d0), nval=5
+  type(mgrid), intent(inout) :: b
+!
+! local variables
+!
+  integer :: i
+  integer :: ic, jc, kc, m, n, zz, id, jx, ctr
+  integer :: is, js, ks, err_cel, err_shft
+  integer :: isol(3), icut(3), tarcel(3), shft(3), icut0(3)
+  real(dp), dimension(3) :: nvec, ppt, qb, pt, eta, xi
+  real(dp) :: ds, dpc, dps, val(8,nval)
+  real(dp) :: fac(8) 
+  real(dp), dimension(5) :: dw_ppt, force
+! *****************************************************************************
+
+  do m = 1,b%nmir
+    zz   = b%z(m)%zz
+    isol = b%z(m)%scid
+    icut = b%z(m)%ccid
+    id   = b%z(m)%faceid
+    ppt  = b%z(m)%psurf
+
+    if (approxbc) then
+       ppt  = b%z(m)%pnew
+       nvec = b%z(m)%norv
+       qb   = b%z(m)%vel/vel_fs   ! normalize the boundary velocity by freestream velocity
+    else
+       ppt  = b%z(m)%psurf
+       nvec = b%z(m)%nvec
+       qb   = 0.0d0 
+    end if
+
+    ic = icut(1)
+    jc = icut(2)
+    kc = icut(3)
+
+    is = isol(1)
+    js = isol(2)
+    ks = isol(3)
+
+!    call cell_center(b%ori, b%gcori, b%cm, icut,pt)
+!    print *, "cut xcen :",b%xcen(ic,jc,kc,:), pt
+    
+!    call cell_center(b%ori, b%gcori, b%cm, isol,pt)
+!    print *, "sol xcen :",b%xcen(is,js,ks,:), pt
+
+    !! FIND THE CELL ON PTR THAT CONTAINS pt
+
+ !   print *, "xcut  :",b%x(ic,jc,kc,:),id
+ !   print *, "xsol  :",b%x(is,js,ks,:)
+ !   print *, "xcen cut :",b%xcen(ic,jc,kc,:),id
+ !   print *, "xcen sol :",b%xcen(is,js,ks,:)
+ !   print *, "psurf    :", ppt
+ 
+    call eval_x2cell(ppt, b%ori,b%gcori,b%icm, b%lowcell, b%uppcell, tarcel, eta, err_cel)
+!    print *, "tarcel:", tarcel
+
+    call shft_cell(shft, xi, b%lowcell, b%uppcell, tarcel, eta, err_shft)
+ !   print *, "eta   :", eta
+ !   print *, "tarcel:", tarcel
+ !   print *, "shft  :", shft,id
+ !   print *, "icut  :", icut
+ !   print *, "isol  :", isol
+ !   print *, "xi    :", xi
+    ! trilinear interpolation
+    call trilinear_factor(xi(1), xi(2), xi(3), fac)
+
+    val = reshape( b%dw(shft(1):shft(1)+1,&
+                        shft(2):shft(2)+1,&
+                        shft(3):shft(3)+1,1:nval), (/8,nval/))
+
+    dw_ppt(:) = (/ ( sum(val(:,n)*fac), n=1,nval ) /)
+
+ !   print *, "dx   :", dx,dpc, dps
+ !   print *, "fac  :", fac
+ !   print *, dw_p
+
+
+ !   print *, "ic cen: ", b%xcen(ic,jc,kc,:)
+ !   print *, "is cen: ", b%xcen(is,js,ks,:)
+ !   print *, "pptcen: ", ppt
+
+
+    ds  = sqrt(sum((b%xcen(ic,jc,kc,:)-b%xcen(is,js,ks,:))**2))
+    dpc = sqrt(sum((b%xcen(ic,jc,kc,:)-ppt(:))**2))/ds
+    dps = sqrt(sum((b%xcen(is,js,ks,:)-ppt(:))**2))/ds
+    
+ ! linear interpolation
+ !  dw_p(:) = dpc*b%dw(is,js,ks,:) + dps*b%dw(ic,jc,kc,:)
+ !   print *, dw_p
+
+ !  print *, b%dw(ic,jc,kc,:)
+ !  print *, b%dw(ic,jc,kc,:) -dw_p(:)*dps
+ !  print *, b%dw(is,js,ks,:)
+ !  print *, b%dw(is,js,ks,:) -dw_p(:)*dpc
+ !  print *
+    ctr = 0
+    do jx = 1,b%nmir
+       icut0 = b%z(jx)%ccid
+       if(all(icut==icut0)) then
+          ctr = ctr + 1
+          !jxa(ctr) = jx
+       end if
+    end do
+
+    force(:)   = -dw_ppt(:)
+    ! to include qb0 for moving geometry
+    ! force(2:4) = force(2:4) +uv_p(1)*(qb(1:3)-qb0(1:3))/dt_p*b%cellvolume
+
+    b%dw(ic,jc,kc,2:4) = b%dw(ic,jc,kc,2:4) +force(2:4)*dps/real(ctr,dp)
+ !   b%dw(is,js,ks,2:4) = b%dw(is,js,ks,2:4) -force(2:4)*dpc
+    
+ !   b%p(is,js,ks) = b%p(ic,jc,kc)
+
+  end do
+
+
+  return
+end subroutine force_int
+
+subroutine bc_pressure(b)
+
+!****************************************************************************
+!
+! INTERPOLATE STATE VARIABLES AT SOLID CELLS
+! USING CURVATURE-CORRECTED SYMMETRY TECHNIQUE
+!
+!****************************************************************************
+
+
+  use typelib4
+  use typepara
+  use ctrlib
+
+  implicit none
+  integer, parameter :: dp=kind(1.0d0), nval=5
+  type(mgrid), intent(inout) :: b
+!
+! local variables
+!
+  integer :: i, ic, jc, kc, m, n, id, jx, ctr
+  integer :: is, js, ks, ncl
+  integer :: isol(3), icut(3), isol0(3), icut0(3)
+  real(dp) :: p_refl, ptmp
+  real(dp), dimension(3) :: nvec, ppt, qb, pt
+  integer, dimension(:,:), pointer :: cloud
+  real(dp), dimension(:), pointer  :: vphi, varp
+! *****************************************************************************
+
+  do m = 1,b%nmir
+    isol = b%z(m)%scid
+    icut = b%z(m)%ccid
+    ppt  = b%z(m)%psurf
+
+    if (approxbc) then
+       ppt  = b%z(m)%pnew
+       nvec = b%z(m)%norv
+       qb   = b%z(m)%vel/vel_fs   ! normalize the boundary velocity by freestream velocity
+    else
+       ppt  = b%z(m)%psurf
+       nvec = b%z(m)%nvec
+       qb   = 0.0d0 
+    end if
+
+    ic = icut(1)
+    jc = icut(2)
+    kc = icut(3)
+
+    is = isol(1)
+    js = isol(2)
+    ks = isol(3)
+
+
+    ncl  = b%z(m)%ipol%npoint
+    allocate(cloud(ncl,3),vphi(1:ncl),varp(ncl))
+
+    cloud = 0
+    vphi = 0.0d0
+    varp = 0.0d0
+    
+    cloud = b%z(m)%ipol%ijkdex
+    vphi  = b%z(m)%ipol%coef
+
+    do i=1,ncl
+       varp(i)  =b%p(cloud(i,1),cloud(i,2),cloud(i,3))
+    end do
+
+! compute the values on the reflected node
+    p_refl = 0.0d0
+    do i=1,ncl
+       p_refl = p_refl +vphi(i)*varp(i)
+    end do
+    b%p(is,js,ks) = p_refl
+
+!    b%p(is,js,ks) = b%p(ic,jc,kc)
+
+    ! if solid cell has more than one cut cell neighbor
+    ! take average of wsol computed from all the cut cell neighbors
+    if(.false.) then
+      ctr  = 0
+      ptmp = 0.0d0
+      do jx = 1,b%nmir
+        isol0 = b%z(jx)%scid
+        if(all(isol==isol0)) then
+          icut0 = b%z(jx)%ccid
+          ctr   = ctr + 1
+          ptmp  = ptmp + b%p(icut0(1),icut0(2),icut0(3))
+        end if
+      end do
+      b%p(is,js,ks) = ptmp/ctr
+    end if
+
+  deallocate(cloud, vphi, varp)
+
+  end do
+
+
+  return
+end subroutine bc_pressure
+
+
+
+subroutine bc_IBM(b)
+
+!****************************************************************************
+!
+! INTERPOLATE STATE VARIABLES AT SOLID CELLS
+! USING CURVATURE-CORRECTED SYMMETRY TECHNIQUE
+!
+!****************************************************************************
+
+
+  use typelib4
+  use typepara
+  use ctrlib
+
+  implicit none
+  integer, parameter :: dp=kind(1.0d0), nval=5
+  type(mgrid), intent(inout) :: b
+!
+! local variables
+!
+  integer :: ic, jc, kc, m, n, id, jx, ctr
+  integer :: is, js, ks
+  integer :: isol(3), icut(3), isol0(3), icut0(3)
+  real(dp) :: ptmp
+  integer :: i
+  integer :: err_cel, err_shft
+  integer :: tarcel(3), shft(3)
+  real(dp), dimension(3) :: nvec, ppt, qb, pt, eta, xi
+  real(dp) :: ds, dpc, dps, val(8,nval), valp(8), dn, p_ppt
+  real(dp) :: fac(8)
+  real(dp), dimension(5) :: dw_ppt, force, uwall, wtmp
+! *****************************************************************************
+
+  do m = 1,b%nmir
+    isol = b%z(m)%scid
+    icut = b%z(m)%ccid
+    ppt  = b%z(m)%psurf
+    id   = b%z(m)%faceid
+
+    if (approxbc) then
+       ppt  = b%z(m)%pnew
+       nvec = b%z(m)%norv
+       qb   = b%z(m)%vel/vel_fs   ! normalize the boundary velocity by freestream velocity
+    else
+       ppt  = b%z(m)%psurf
+       nvec = b%z(m)%nvec
+       qb   = 0.0d0 
+    end if
+
+
+    uwall(1)   = rho0
+    uwall(2:4) = rho0*qb(1:3)
+    uwall(5)   = gamma*ei0 - p0
+
+    ic = icut(1)
+    jc = icut(2)
+    kc = icut(3)
+
+    is = isol(1)
+    js = isol(2)
+    ks = isol(3)
+
+    
+
+
+
+    if(id == 1) then
+       !print *, ppt(1), b%xcen(ic,jc,kc,1),b%xcen(ic+1,jc,kc,1)
+       call linear_interp(nval,b%w(ic,jc,kc,:),uwall,b%w(ic+1,jc,kc,:), &
+            b%xcen(ic,jc,kc,1),ppt(1),b%xcen(ic+1,jc,kc,1))
+       b%p(ic,jc,kc)   = b%p(ic+1,jc,kc) 
+       !b%w(ic,jc,kc,5) = b%w(ic+1,jc,kc,5)/b%w(ic+1,jc,kc,1)*b%w(ic,jc,kc,1) 
+       b%p(is,js,ks)   = b%p(ic+1,jc,kc) 
+       
+    else if(id == 4) then
+       call linear_interp(nval,b%w(ic,jc,kc,:),uwall,b%w(ic-1,jc,kc,:), &
+            b%xcen(ic,jc,kc,1),ppt(1),b%xcen(ic-1,jc,kc,1))
+       b%p(ic,jc,kc)   = b%p(ic-1,jc,kc) 
+       !b%w(ic,jc,kc,5) = b%w(ic-1,jc,kc,5)/b%w(ic-1,jc,kc,1)*b%w(ic,jc,kc,1)  
+       b%p(is,js,ks)   = b%p(ic-1,jc,kc) 
+
+    else if(id == 2) then
+       call linear_interp(nval,b%w(ic,jc,kc,:),uwall,b%w(ic,jc+1,kc,:), &
+            b%xcen(ic,jc,kc,2),ppt(2),b%xcen(ic,jc+1,kc,2))
+       b%p(ic,jc,kc)   = b%p(ic,jc+1,kc) 
+       !b%w(ic,jc,kc,5) = b%w(ic,jc+1,kc,5)/b%w(ic,jc+1,kc,1)*b%w(ic,jc,kc,1)  
+       b%p(is,js,ks)   = b%p(ic,jc+1,kc) 
+
+    else if(id == 5) then
+       call linear_interp(nval,b%w(ic,jc,kc,:),uwall,b%w(ic,jc-1,kc,:), &
+            b%xcen(ic,jc,kc,2),ppt(2),b%xcen(ic,jc-1,kc,2))
+       b%p(ic,jc,kc)   = b%p(ic,jc-1,kc) 
+       !b%w(ic,jc,kc,5) = b%w(ic,jc-1,kc,5)/b%w(ic,jc-1,kc,1)*b%w(ic,jc,kc,1) 
+       b%p(is,js,ks)   = b%p(ic,jc-1,kc) 
+
+    else if(id == 3) then
+       call linear_interp(nval,b%w(ic,jc,kc,:),uwall,b%w(ic,jc,kc+1,:), &
+            b%xcen(ic,jc,kc,3),ppt(3),b%xcen(ic,jc,kc+1,3))
+       b%p(ic,jc,kc)   = b%p(ic,jc,kc+1) 
+       !b%w(ic,jc,kc,5) = b%w(ic,jc,kc+1,5)/b%w(ic,jc,kc+1,1)*b%w(ic,jc,kc,1) 
+       b%p(is,js,ks)   = b%p(ic,jc,kc+1) 
+
+    else if(id == 6) then
+       call linear_interp(nval,b%w(ic,jc,kc,:),uwall,b%w(ic,jc,kc-1,:), &
+            b%xcen(ic,jc,kc,3),ppt(3),b%xcen(ic,jc,kc-1,3))
+       b%p(ic,jc,kc)   = b%p(ic,jc,kc-1) 
+       !b%w(ic,jc,kc,5) = b%w(ic,jc,kc-1,5)/b%w(ic,jc,kc-1,1)*b%w(ic,jc,kc,1) 
+       b%p(is,js,ks)   = b%p(ic,jc,kc-1) 
+
+    end if
+
+    ! if solid cell has more than one cut cell neighbor
+    ! take average of wsol computed from all the cut cell neighbors
+    if(.true.) then
+      ctr  = 1
+      wtmp = b%w(ic,jc,kc,:)
+      ptmp = b%p(ic,jc,kc)
+      do jx = 1,m-1
+        icut0 = b%z(jx)%ccid
+        if(all(icut==icut0)) then
+          ctr  = ctr + 1
+          ptmp = ptmp + b%p(icut0(1),icut0(2),icut0(3))
+          wtmp = wtmp + b%w(icut0(1),icut0(2),icut0(3),:)
+        end if
+      end do
+      if(ctr > 1) then
+        b%p(ic,jc,kc)   = ptmp/ctr
+        b%w(ic,jc,kc,:) = wtmp/ctr
+        b%p(is,js,ks)   = b%p(ic,jc,kc)
+      end if
+    end if
+
+  end do
+
+
+  return
+end subroutine bc_IBM
+
+
+subroutine linear_interp(n,uint,u1,u2,xint,x1,x2)
+  implicit none
+  integer, parameter :: dp=kind(1.0d0)
+  integer, intent(in) :: n
+  real(dp), dimension(n),intent(in) :: u1,u2
+  real(dp), dimension(n),intent(out) :: uint
+  real(dp), intent(in) :: xint,x1,x2
+
+!--------------------------------------------------
+
+  uint = u1+(xint-x1)/(x2-x1)*(u2-u1) 
+  !print *, u1
+  !print *, uint
+  !print *, u2
+  !print *, x1,xint,x2
+  !print *
+
+  return
+end subroutine linear_interp
+
+
+subroutine bc_IBM1(b)
+
+!****************************************************************************
+!
+! INTERPOLATE STATE VARIABLES AT SOLID CELLS
+! USING CURVATURE-CORRECTED SYMMETRY TECHNIQUE
+!
+!****************************************************************************
+
+
+  use typelib4
+  use typepara
+  use ctrlib
+
+  implicit none
+  integer, parameter :: dp=kind(1.0d0), nval=5
+  type(mgrid), intent(inout) :: b
+!
+! local variables
+!
+  integer :: ic, jc, kc, m, n, id, jx, ctr
+  integer :: is, js, ks, npoint
+  integer :: isol(3), icut(3), isol0(3), icut0(3),icel(3)
+  real(dp) :: dtmp,dist,cdist
+  integer :: i,j,k,ii,jj,kk
+  real(dp), dimension(3) :: nvec, ppt, qb
+  real(dp), dimension(5) :: uwall,wdist
+! *****************************************************************************
+  include 'mgridtopo.h'
+
+
+  do i=2,b%il
+    do j=2,b%jl
+      do k=2,b%kl
+        if(b%celltype(i,j,k) == ccut) then
+          dist   = 0.0d0
+          npoint = 0
+          icel   = (/i,j,k/)
+          do m = 1,b%nmir
+            icut = b%z(m)%ccid
+
+            if(all(icut == icel))then
+              ppt  = b%z(m)%psurf
+              if (approxbc) then
+                ppt  = b%z(m)%pnew
+                nvec = b%z(m)%norv
+                qb   = b%z(m)%vel/vel_fs   ! normalize the boundary velocity by freestream velocity
+              else
+                ppt  = b%z(m)%psurf
+                nvec = b%z(m)%nvec
+                qb   = 0.0d0 
+              end if
+
+              npoint        = npoint + 1
+              wdist(npoint) = sqrt(sum((b%xcen(i,j,k,:)-ppt(:))**2.0d0))
+              dist          = dist + 1.0d0/wdist(npoint)
+            end if
+          end do
+          !print *, "number of wall point :", npoint,wdist(1:npoint)
+
+          do ii = -1,1,2
+            do jj = -1,1,2
+              do kk = -1,1,2
+                if(any((/i+ii,j+jj,k+kk/) < 2) .or. any((/i+ii,j+jj,k+kk/) > (/b%il,b%jl,b%kl/))) cycle
+                if(b%celltype(i+ii,j+jj,k+kk) == cwet) then
+                  cdist = sqrt(sum((b%xcen(i,j,k,:)-b%xcen(i+ii,j+jj,k+kk,:))**2.0d0))
+                  dist = dist + 1.0d0/cdist
+                  !print *,"cell dist :",cdist,dist
+                end if
+              end do
+            end do
+          end do
+
+          b%w(i,j,k,2:4) = 0.0d0
+          b%p(i,j,k)   = 0.0d0
+
+          do ii = -1,1,2
+            do jj = -1,1,2
+              do kk = -1,1,2
+                if(any((/i+ii,j+jj,k+kk/) < 2) .or. any((/i+ii,j+jj,k+kk/) > (/b%il,b%jl,b%kl/))) cycle
+                if(b%celltype(i+ii,j+jj,k+kk) == cwet) then
+                  cdist = sqrt(sum((b%xcen(i,j,k,:)-b%xcen(i+ii,j+jj,k+kk,:))**2.0d0))
+                  b%w(i,j,k,2:4) = b%w(i,j,k,2:4)+ 1.0d0/cdist/dist*b%w(i+ii,j+jj,k+kk,2:4)
+                  b%p(i,j,k)     = b%p(i,j,k)+ 1.0d0/cdist/dist*b%p(i+ii,j+jj,k+kk)
+                end if
+              end do
+            end do
+          end do
+
+          dtmp = 0.0d0
+          do ii = 1,npoint
+            b%w(i,j,k,2:4) = b%w(i,j,k,2:4) + 1.0d0/wdist(ii)/dist*qb(1:3)
+            dtmp = dtmp + 1.0d0/wdist(ii)/dist 
+          end do
+          b%p(i,j,k)   = b%p(i,j,k)/(1-dtmp)
+          !print *, b%w(i,j,k,:),b%p(i,j,k)
+
+        end if
+      end do
+    end do
+  end do
+
+
+  return
+end subroutine bc_IBM1
